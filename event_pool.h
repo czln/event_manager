@@ -47,14 +47,14 @@ auto call(Function f, Tuple t) {
 template <typename ...T>
 class handle : public handle_base { };
 
-template <typename ...Args>
-class handle<void (Args...)> : public handle_base {
+template <typename Ret, typename ...Args>
+class handle<Ret (Args...)> : public handle_base {
 private:
-    std::function<void(Args...)> function_;
+    std::function<Ret(Args...)> function_;
     std::tuple<Args...> args_;
 public:
 
-    handle(std::function<void(Args...)> function, Args... args) :
+    handle(std::function<Ret(Args...)> function, Args... args) :
     function_(function),
     args_(std::make_tuple(args...)) { }
 
@@ -63,6 +63,10 @@ public:
     void run() override {
         call(function_, args_);
     }
+    /// function with return
+    // Ret run() {
+    //     return call(function_, args_);
+    // }
 
     void set(Args... args) {
         args_ = std::make_tuple(args...);
@@ -106,9 +110,9 @@ public:
 
     void register_event(const std::string &id_, const handle_ptr_t &event);
 
-    template <typename ...Args>
+    template <typename Func, typename ...Args>
     void register_event(const std::string &id_,
-                        type_identity_t<std::function<void(Args...)>> function_,
+                        Func function_,
                         Args... args);
 
     void unregister_event(const std::string &id_);
@@ -150,13 +154,15 @@ void event_pool::register_event(const std::string &id_, const handle_ptr_t &even
     throw std::runtime_error("fail to register: id already occupied");
 }
 
-template <typename ...Args>
+template <typename Func, typename ...Args>
 void event_pool::register_event(const std::string &id_,
-                                type_identity_t<std::function<void(Args...)>> function_,
+                                Func function_,
                                 Args... args_) {
+    using result_type = std::result_of_t<Func(Args...)>;
+
     auto e = events.find(id_);
     if (e == events.end()) {
-        std::shared_ptr<handle_base> hp(new handle<void (Args...)>(function_,
+        std::shared_ptr<handle_base> hp(new handle<result_type (Args...)>(function_,
                                                                    args_...));
         events.template emplace(id_, hp);
         return;
