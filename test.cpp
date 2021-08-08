@@ -35,6 +35,8 @@ int main() {
     h21.run();
     h22.run();
 
+
+    /// multithread test
     std::thread(&handle_base::run, &h1).detach();
     std::thread(&handle_base::run, &h1).detach();
     std::thread(&handle_base::run, &h1).detach();
@@ -46,7 +48,7 @@ int main() {
 
     /// event pool \test
     event_pool ep;
-    std::thread(&event_pool::run, &ep).detach();
+    std::thread p(&event_pool::run, &ep);
 
     std::shared_ptr<handle_base> hp1(new handle<void()>([](){ printf("ep| void lambda test\n");}));
     std::shared_ptr<handle_base> hp2(new handle<void(int)>([](int a){ printf("ep| 1 arg lambda test %d\n", a);}, 1));
@@ -68,9 +70,11 @@ int main() {
     ep.trigger_event("2");
 
     ep.trigger_event("3");
-    ////    std::this_thread::sleep_for(1s);
-    //    sleep(1);
+
+    /// end the jobs
     ep.terminate();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    /// wait till all done;
+    p.join();
+    // std::this_thread::sleep_for(std::chrono::milliseconds(10));
     return 0;
 }

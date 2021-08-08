@@ -130,7 +130,7 @@ public:
     void trigger_and_set(const std::string &id_, Args... args);
 };
 
-void event_pool::run() {
+inline void event_pool::run() {
 //    std::unique_lock<std::mutex> lk(lock_helper);
     while (!quit.load()) {
         sem_wait(&at_least_one_active);
@@ -145,7 +145,8 @@ void event_pool::run() {
     }
 }
 
-void event_pool::register_event(const std::string &id_, const handle_ptr_t &event) {
+inline void event_pool::register_event(const std::string &id_, 
+                                       const handle_ptr_t &event) {
     auto e = events.find(id_);
     if (e == events.end()) {
         events.emplace(id_, event);
@@ -155,9 +156,9 @@ void event_pool::register_event(const std::string &id_, const handle_ptr_t &even
 }
 
 template <typename Func, typename ...Args>
-void event_pool::register_event(const std::string &id_,
-                                Func function_,
-                                Args... args_) {
+inline void event_pool::register_event(const std::string &id_,
+                                       Func function_,
+                                       Args... args_) {
     using result_type = std::result_of_t<Func(Args...)>;
 
     auto e = events.find(id_);
@@ -171,7 +172,7 @@ void event_pool::register_event(const std::string &id_,
 
 }
 
-void event_pool::unregister_event(const std::string &id_) {
+inline void event_pool::unregister_event(const std::string &id_) {
     auto event = events.find(id_);
     if (event != events.end()) {
         std::mutex lk;
@@ -182,7 +183,7 @@ void event_pool::unregister_event(const std::string &id_) {
 }
 
 // this just call the function in pool
-void event_pool::trigger_event(const std::string &id_) {
+inline void event_pool::trigger_event(const std::string &id_) {
     auto event = events.find(id_);
     if (event != events.end()) {
         active_events.emplace(event->second);
@@ -197,7 +198,7 @@ void event_pool::trigger_event(const std::string &id_) {
 //  but it's not hold by the event pool. which means after execution,
 //  it will expire
 template <typename ...Args>
-void event_pool::trigger_event(const std::string &id_, Args... args) {
+inline void event_pool::trigger_event(const std::string &id_, Args... args) {
     auto event = events.find(id_);
     if (event != events.end()) {
         auto tmp_func = dynamic_cast<handle<void (Args...)>*>(event
@@ -213,7 +214,7 @@ void event_pool::trigger_event(const std::string &id_, Args... args) {
 }
 
 template <typename ...Args>
-void event_pool::trigger_and_set(const std::string &id_, Args ...args) {
+inline void event_pool::trigger_and_set(const std::string &id_, Args ...args) {
     auto event = events.find(id_);
     if (event != events.end()) {
         dynamic_cast<handle<void (Args...)>*> (event->second.get())
