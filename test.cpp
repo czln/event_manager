@@ -48,13 +48,16 @@ int main() {
 
     /// event pool \test
     event_pool ep;
-    std::thread p(&event_pool::run, &ep);
+    // std::thread p(&event_pool::run, &ep);
 
     std::shared_ptr<handle_base> hp1(new handle<void()>([](){ printf("ep| void lambda test\n");}));
     std::shared_ptr<handle_base> hp2(new handle<void(int)>([](int a){ printf("ep| 1 arg lambda test %d\n", a);}, 1));
+
     ep.register_event("1", hp1);
     ep.register_event("2", hp2);
     ep.register_event("3", [](){ printf("direct call|lambda| void lambda test\n");});
+
+    ep.register_event("4", [](){sleep(3);printf("lambda terminate test\n");});
 
     ep.trigger_event("1");
     ep.trigger_event("2");
@@ -71,10 +74,9 @@ int main() {
 
     ep.trigger_event("3");
 
+    ep.trigger_event("4");
+
     /// end the jobs
     ep.terminate();
-    /// wait till all done;
-    p.join();
-    // std::this_thread::sleep_for(std::chrono::milliseconds(10));
     return 0;
 }

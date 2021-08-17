@@ -34,6 +34,7 @@ public:
 
 using handle_ptr_t = std::shared_ptr<handle_base>;
 
+// helper functions to expand std::tuple
 template<typename Function, typename Tuple, size_t ... I>
 auto call(Function f, Tuple t, std::index_sequence<I ...>) {
     return f(std::get<I>(t) ...);
@@ -72,42 +73,54 @@ public:
         args_ = std::make_tuple(args...);
     }
 
-    std::function<void(Args...)> get_func() {
+    std::function<Ret(Args...)> get_func() {
         return function_;
     }
 };
 
+static const int THREAD_NUM = 6;
+static const int TIMEOUT_MILLISECOND = 1000;
+
 class event_pool {
 private:
     std::atomic<bool> quit;
-    /// TODO: semaphore have better performance, but its value
-    ///       would be unnecessarily large during execution
-    ///       ( each trigger add one, but while minus one, it may
-    ///       deal with multiple events, so there would be some
-    ///       "save up" ). but as each active event emplaced first,
-    ///       it works fine by now. if any bug, change to condition
-    ///       variable
-    sem_t at_least_one_active;
+    // sem_t at_least_one_active;
 //    std::mutex lock_helper;
 //    std::condition_variable at_least_one_active;
     std::queue<handle_ptr_t> active_events;
     std::unordered_map<std::string, handle_ptr_t> events;
 
+    std::vector<std::future<void>> futures;
+    sem_t   thread_ok[THREAD_NUM];
+    std::vector<std::queue<handle_ptr_t>> active_event_queue;
+
 public:
-    event_pool() :
-    quit(false) { sem_init(&at_least_one_active, 0, 0); }
-    ~event_pool() { sem_destroy(&at_least_one_active); }
+    event_pool();
+    ~event_pool() { 
+        terminate();
+        // sem_destroy(&at_least_one_active); 
+        for (int i=0; i<THREAD_NUM; ++i) {
+            sem_destroy(thread_ok + i);
+        }
+    }
 
     /// \WARNING: 
-    /// 1. DO NOT RUN THIS IN PARALLEL, if using
-    /// condition variable it would cause DEAD LOCK, if
-    /// semaphore would cause RACE CONDITION
-    /// 2. after calling terminate, this won't end until all
-    /// active_events handled, so don't dealloc the thread resources
-    /// until this function actually ends
-    void run();
-    void terminate() {quit = true;}
+    /// this won't end until all tasks finished, so don't add any unfinishable 
+    /// task
+    void terminate() {
+        quit = true;
+        std::chrono::milliseconds timeout(TIMEOUT_MILLISECOND);
+        for (int i=0; i<futures.size(); ++i) {
+            if (std::future_status::timeout == futures[i].wait_for(timeout)) {
+                printf("timeout %d\n", i);
+            }
+        }
+    }
+    /// this function won't block the thread, so you have to make sure the resources
+    /// won't be destroyed yourself;
+    void try_terminate() {quit = true;}
 
+    //  this function is unable to get the function signature during compile time
     void register_event(const std::string &id_, const handle_ptr_t &event);
 
     template <typename Func, typename ...Args>
@@ -128,20 +141,31 @@ public:
     /// \brief set the args of the event and save, then trigger the event
     template <typename ...Args>
     void trigger_and_set(const std::string &id_, Args... args);
+
+private:
+/// \internal add a task to the active event queue (the one with the least tasks)
+    void add_task(handle_ptr_t tmp_handle);
 };
 
-inline void event_pool::run() {
-//    std::unique_lock<std::mutex> lk(lock_helper);
-    while (!quit.load()) {
-        sem_wait(&at_least_one_active);
-//        at_least_one_active.wait(lk);
-        while (active_events.size()) {
-            auto event = active_events.front();
-            /// TODO: thread pool
-            /// if running, and unregister_event called, UB!
-            std::thread(&handle_base::run, event).detach();
-            active_events.pop();
-        }
+inline event_pool::event_pool() :
+    quit(false),
+    active_event_queue(THREAD_NUM) {
+    // sem_init(&at_least_one_active, 0, 0);
+    for (int i=0; i<THREAD_NUM; ++i) {
+        sem_init(thread_ok+i, 0, 0);
+    }
+
+    for (int i=0; i<THREAD_NUM; ++i) {
+        futures.emplace_back(std::async([i, this](){
+            while (!quit.load()) {
+                sem_wait(&thread_ok[i]);
+                while (active_event_queue[i].size()) {
+                    auto task = active_event_queue[i].front();
+                    task->run();
+                    active_event_queue[i].pop();
+                }
+            }
+        }));
     }
 }
 
@@ -186,8 +210,10 @@ inline void event_pool::unregister_event(const std::string &id_) {
 inline void event_pool::trigger_event(const std::string &id_) {
     auto event = events.find(id_);
     if (event != events.end()) {
-        active_events.emplace(event->second);
-        sem_post(&at_least_one_active);
+        add_task(event->second);
+
+        // active_events.emplace(event->second);
+        // sem_post(&at_least_one_active);
 //        at_least_one_active.notify_all();
         return;
     }
@@ -205,8 +231,11 @@ inline void event_pool::trigger_event(const std::string &id_, Args... args) {
                 ->second.get())
                         ->get_func();
         handle_ptr_t tmp_handle(new handle<void (Args...)>(tmp_func, args...));
-        active_events.emplace(tmp_handle);
-        sem_post(&at_least_one_active);
+
+        add_task(tmp_handle);
+
+        // active_events.emplace(tmp_handle);
+        // sem_post(&at_least_one_active);
 //        at_least_one_active.notify_all();
         return;
     }
@@ -219,13 +248,40 @@ inline void event_pool::trigger_and_set(const std::string &id_, Args ...args) {
     if (event != events.end()) {
         dynamic_cast<handle<void (Args...)>*> (event->second.get())
                                                 ->set(args...);
-        active_events.emplace(event->second);
-        sem_post(&at_least_one_active);
+                                                
+        add_task(event->second);
+
+        // active_events.emplace(event->second);
+        // sem_post(&at_least_one_active);
 //        at_least_one_active.notify_all();
         return;
     }
     throw std::runtime_error("fail to trigger: no registered events matched");
 
+}
+
+inline void event_pool::add_task(handle_ptr_t tmp_handle) {
+                                                
+    int min_tasks = INT32_MAX;  // the minimum tasks in queue of all threads
+    int min_i     = -1;
+    for (int i=0; i<THREAD_NUM; ++i) {
+        if (active_event_queue[i].empty()) {
+            active_event_queue[i].emplace(tmp_handle);
+            sem_post(thread_ok + i);
+            min_i = -1; // clear this to original value
+            break;
+        } else {
+            if (active_event_queue[i].size() < min_tasks) {
+                min_tasks = active_event_queue[i].size();
+                min_i = i;
+            }
+        }
+    }
+    // no empty task queue, add to the queue with the least tasks
+    if (min_i != -1) {
+        active_event_queue[min_i].emplace(tmp_handle);
+        sem_post(thread_ok + min_i);
+    }
 }
 
 #endif //EVENT_MANAGER_EDA_H
