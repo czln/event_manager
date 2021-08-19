@@ -107,10 +107,15 @@ public:
     /// \WARNING: 
     /// this won't end until all tasks finished, so don't add any unfinishable 
     /// task
+    /// there is no way to rerun the event pool after calling terminate().
+    /// if you do need to do that, you have to create a new instance of event_pool
+    /// and start over
     void terminate() {
         quit = true;
         std::chrono::milliseconds timeout(TIMEOUT_MILLISECOND);
-        for (int i=0; i<futures.size(); ++i) {
+        for (int i=0; i<THREAD_NUM; ++i) {
+            sem_post(thread_ok + i);    // continue all the blocked threads
+
             if (std::future_status::timeout == futures[i].wait_for(timeout)) {
                 printf("timeout %d\n", i);
             }
@@ -130,6 +135,8 @@ public:
 
     void unregister_event(const std::string &id_);
 
+
+    /// \NOTE: you're not allowed to trigger events afted the pool terminated
     void trigger_event(const std::string &id_);
 
     template <typename ...Args>
@@ -145,6 +152,9 @@ public:
 private:
 /// \internal add a task to the active event queue (the one with the least tasks)
     void add_task(handle_ptr_t tmp_handle);
+
+/// \internal poll all the active events, and add them to the correct task flow
+    void poll_events();
 };
 
 inline event_pool::event_pool() :
@@ -155,18 +165,8 @@ inline event_pool::event_pool() :
         sem_init(thread_ok+i, 0, 0);
     }
 
-    for (int i=0; i<THREAD_NUM; ++i) {
-        futures.emplace_back(std::async([i, this](){
-            while (!quit.load()) {
-                sem_wait(&thread_ok[i]);
-                while (active_event_queue[i].size()) {
-                    auto task = active_event_queue[i].front();
-                    task->run();
-                    active_event_queue[i].pop();
-                }
-            }
-        }));
-    }
+    // start to poll events in thread pool
+    poll_events();
 }
 
 inline void event_pool::register_event(const std::string &id_, 
@@ -208,6 +208,8 @@ inline void event_pool::unregister_event(const std::string &id_) {
 
 // this just call the function in pool
 inline void event_pool::trigger_event(const std::string &id_) {
+    if (quit.load()) 
+        throw std::runtime_error("the event pool has been terminated");
     auto event = events.find(id_);
     if (event != events.end()) {
         add_task(event->second);
@@ -225,6 +227,8 @@ inline void event_pool::trigger_event(const std::string &id_) {
 //  it will expire
 template <typename ...Args>
 inline void event_pool::trigger_event(const std::string &id_, Args... args) {
+    if (quit.load()) 
+        throw std::runtime_error("the event pool has been terminated");
     auto event = events.find(id_);
     if (event != events.end()) {
         auto tmp_func = dynamic_cast<handle<void (Args...)>*>(event
@@ -244,6 +248,8 @@ inline void event_pool::trigger_event(const std::string &id_, Args... args) {
 
 template <typename ...Args>
 inline void event_pool::trigger_and_set(const std::string &id_, Args ...args) {
+    if (quit.load()) 
+        throw std::runtime_error("the event pool has been terminated");
     auto event = events.find(id_);
     if (event != events.end()) {
         dynamic_cast<handle<void (Args...)>*> (event->second.get())
@@ -259,6 +265,8 @@ inline void event_pool::trigger_and_set(const std::string &id_, Args ...args) {
     throw std::runtime_error("fail to trigger: no registered events matched");
 
 }
+
+/// \internal functions below
 
 inline void event_pool::add_task(handle_ptr_t tmp_handle) {
                                                 
@@ -281,6 +289,21 @@ inline void event_pool::add_task(handle_ptr_t tmp_handle) {
     if (min_i != -1) {
         active_event_queue[min_i].emplace(tmp_handle);
         sem_post(thread_ok + min_i);
+    }
+}
+
+inline void event_pool::poll_events() {
+    for (int i=0; i<THREAD_NUM; ++i) {
+        futures.emplace_back(std::async([i, this](){
+            while (!quit.load()) {
+                sem_wait(&thread_ok[i]);
+                while (active_event_queue[i].size()) {
+                    auto task = active_event_queue[i].front();
+                    task->run();
+                    active_event_queue[i].pop();
+                }
+            }
+        }));
     }
 }
 
