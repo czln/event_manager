@@ -93,6 +93,7 @@ private:
     std::vector<std::future<void>> futures;
     sem_t   thread_ok[THREAD_NUM];
     std::vector<std::queue<handle_ptr_t>> active_event_queue;
+    std::mutex  lk_events;
 
 public:
     event_pool();
@@ -199,10 +200,8 @@ inline void event_pool::register_event(const std::string &id_,
 inline void event_pool::unregister_event(const std::string &id_) {
     auto event = events.find(id_);
     if (event != events.end()) {
-        std::mutex lk;
-        lk.lock();
+        std::lock_guard<std::mutex> lg(lk_events);
         events.erase(event);
-        lk.unlock();
     }
 }
 
