@@ -24,6 +24,8 @@ int main() {
     functor ft;
     handle<void()> h21(ft);
     handle<void(int)> h22(ft, 1);
+    
+
 
 
     h1.run();
@@ -78,5 +80,17 @@ int main() {
 
     /// end the jobs
     ep.terminate();
+
+    printf("all tests passed\n");
+    
+
+    printf("now for error tests\n");
+    /// error tests:
+    event_pool ep1;
+
+    /// no match test
+    ep1.register_event("no match", [](int a){printf("test for not matched args %d\n", a);}, 0);
+    ep1.trigger_event("no match", 1.1);
+
     return 0;
 }

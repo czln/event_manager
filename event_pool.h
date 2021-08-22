@@ -53,7 +53,9 @@ class handle<Ret (Args...)> : public handle_base {
 private:
     std::function<Ret(Args...)> function_;
     std::tuple<Args...> args_;
+    char* flag = new char();
 public:
+
 
     handle(std::function<Ret(Args...)> function, Args... args) :
     function_(function),
@@ -218,7 +220,9 @@ inline void event_pool::trigger_event(const std::string &id_) {
 //        at_least_one_active.notify_all();
         return;
     }
-    throw std::runtime_error("fail to trigger: no registered events matched");
+    std::string err("fail to trigger: no registered events matched");
+    err = err + ": " + id_;
+    throw std::runtime_error(err.data());
 }
 
 //  this creates a temporary event and adds it into the active pool.
@@ -230,19 +234,19 @@ inline void event_pool::trigger_event(const std::string &id_, Args... args) {
         throw std::runtime_error("the event pool has been terminated");
     auto event = events.find(id_);
     if (event != events.end()) {
-        auto tmp_func = dynamic_cast<handle<void (Args...)>*>(event
-                ->second.get())
-                        ->get_func();
-        handle_ptr_t tmp_handle(new handle<void (Args...)>(tmp_func, args...));
+        /// \NOTE:
+        /// this would throw a bas_cast if the (Args...) in this function does
+        /// not match with the (Args...) in the register_event() related 
+        auto tmp_func = dynamic_cast<handle<void (Args...)>&>(*(event->second))
+                            .get_func();
 
-        add_task(tmp_handle);
-
-        // active_events.emplace(tmp_handle);
-        // sem_post(&at_least_one_active);
-//        at_least_one_active.notify_all();
+        add_task(std::make_shared<handle<void(Args...)>>(tmp_func, args...));
         return;
+
     }
-    throw std::runtime_error("fail to trigger: no registered events matched");
+    std::string err("fail to trigger: no registered events matched");
+    err = err + ": " + id_;
+    throw std::runtime_error(err.data());
 }
 
 template <typename ...Args>
@@ -261,7 +265,9 @@ inline void event_pool::trigger_and_set(const std::string &id_, Args ...args) {
 //        at_least_one_active.notify_all();
         return;
     }
-    throw std::runtime_error("fail to trigger: no registered events matched");
+    std::string err("fail to trigger: no registered events matched");
+    err = err + ": " + id_;
+    throw std::runtime_error(err.data());
 
 }
 
