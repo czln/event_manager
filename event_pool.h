@@ -235,7 +235,7 @@ inline void event_pool::trigger_event(const std::string &id_, Args... args) {
     auto event = events.find(id_);
     if (event != events.end()) {
         /// \NOTE:
-        /// this would throw a bas_cast if the (Args...) in this function does
+        /// this would throw a bad_cast if the (Args...) in this function does
         /// not match with the (Args...) in the register_event() related 
         auto tmp_func = dynamic_cast<handle<void (Args...)>&>(*(event->second))
                             .get_func();
