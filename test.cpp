@@ -24,7 +24,6 @@ int main() {
     functor ft;
     handle<void()> h21(ft);
     handle<void(int)> h22(ft, 1);
-    
 
 
 
@@ -90,7 +89,11 @@ int main() {
 
     /// no match test
     ep1.register_event("no match", [](int a){printf("test for not matched args %d\n", a);}, 0);
-    ep1.trigger_event("no match", 1.1);
+    // ep1.trigger_event("no match", 1.1);  // error
+
+    // implicit match test
+    ep.register_event("1", [](std::string s){}, "");
+    // ep.trigger_event("1", std::string("")); // error this would cause bad_cast
 
     return 0;
 }

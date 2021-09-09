@@ -5,17 +5,18 @@
 #ifndef EVENT_MANAGER_EDA_H
 #define EVENT_MANAGER_EDA_H
 
-#include <functional>
 #include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <exception>
-#include <unordered_map>
-#include <queue>
-#include <tuple>
+#include <functional>
 #include <memory>
 #include <mutex>
+#include <queue>
 #include <thread>
+#include <tuple>
+#include <unordered_map>
 #include <utility>
-#include <condition_variable>
 
 #include <semaphore.h>
 
@@ -24,7 +25,60 @@ struct type_identity {using type = T;};
 template <typename T>
 using type_identity_t = typename type_identity<T>::type;
 
+/// millisocond timer
+class timer {
+    enum type_t {
+        every,
+        once
+    };
+private:
+    sem_t &trigger;
+    std::chrono::milliseconds interv;
+    std::atomic_bool quit;
+    type_t type;
+    std::thread running;
+public:
+    timer(sem_t &trig, size_t time_ms, type_t t = every);
+    ~timer() { terminate(); }
+    void run();
+    void terminate() { quit = true; if (running.joinable()) running.join(); }
+
+private:
+    void run_once();
+    void run_every();
+};
+timer::timer(sem_t &trig, size_t time_ms, type_t t) :
+    trigger(trig),
+    interv(time_ms),
+    quit(false),
+    type(t) {}
+
+void timer::run() {
+    if (type == once) {
+        run_once();
+    } else if (type == every) 
+        run_every();
+}
+
+/// \internal
+void timer::run_once() {
+    running = std::thread([this]() {
+        std::this_thread::sleep_for(interv);
+        sem_post(&trigger);
+    });
+}
+void timer::run_every() {
+    running = std::thread([this]() {
+        while (!quit.load()) {
+            std::this_thread::sleep_for(interv);
+            sem_post(&trigger);
+        }
+    });
+}
+
 class handle_base {
+private:
+    std::launch strategy = std::launch::deferred;
 public:
     virtual ~handle_base() = default;
     virtual void run() = 0;
@@ -80,19 +134,51 @@ public:
     }
 };
 
+// template <typename ...Args>
+// class timer_handle : public handle_base {};
+
+// template <typename Ret, typename ...Args>
+// class timer_handle<Ret(Args...)> {
+// private:
+//     std::function<Ret(Args...)> function_;
+//     std::tuple<Args...> args_;
+//     char* flag = new char();
+// public:
+
+
+//     handle(timer::type_t type, std::function<Ret(Args...)> function, Args... args) :
+//         args_(std::make_tuple(args...)) {
+//         if (type == timer::type_t::once) {
+//             function_ = std::bind([function, args...](){
+
+//             });
+//         }
+//     }
+
+//     /// not thread safe, may need to add lock job while using it,
+//     /// depending on the args and function
+//     void run() override {
+//         call(function_, args_);
+//     }
+//     void set(Args... args) {
+//         args_ = std::make_tuple(args...);
+//     }
+
+//     std::function<Ret(Args...)> get_func() {
+//         return function_;
+//     }
+
+// };
+
 static const int THREAD_NUM = 6;
 static const int TIMEOUT_MILLISECOND = 1000;
 
 class event_pool {
 private:
     std::atomic<bool> quit;
-    // sem_t at_least_one_active;
-//    std::mutex lock_helper;
-//    std::condition_variable at_least_one_active;
-    std::queue<handle_ptr_t> active_events;
     std::unordered_map<std::string, handle_ptr_t> events;
 
-    std::vector<std::future<void>> futures;
+    std::vector<std::future<void>> threads;
     sem_t   thread_ok[THREAD_NUM];
     std::vector<std::queue<handle_ptr_t>> active_event_queue;
     std::mutex  lk_events;
@@ -101,7 +187,6 @@ public:
     event_pool();
     ~event_pool() { 
         terminate();
-        // sem_destroy(&at_least_one_active); 
         for (int i=0; i<THREAD_NUM; ++i) {
             sem_destroy(thread_ok + i);
         }
@@ -119,7 +204,7 @@ public:
         for (int i=0; i<THREAD_NUM; ++i) {
             sem_post(thread_ok + i);    // continue all the blocked threads
 
-            if (std::future_status::timeout == futures[i].wait_for(timeout)) {
+            if (std::future_status::timeout == threads[i].wait_for(timeout)) {
                 printf("timeout %d\n", i);
             }
         }
@@ -182,6 +267,20 @@ inline void event_pool::register_event(const std::string &id_,
     throw std::runtime_error("fail to register: id already occupied");
 }
 
+/// !\warning
+/// if this \tparam Args different from the args type in \tparam Func,
+/// and it can implicit convert to the args type in \tparam Func, it
+/// would pass the compile exam, but the type of handle registered is
+/// \tparam Args instead of the args type in \tparam Func, which may cause
+/// a bad_cast, if you still give the args type when try triggerring this:
+/// \code
+/// bad example:
+/// event_pool ep;
+/// ep.register("bad", [](std::string str) {}, ""); // note the actual handle type 
+///                                                 // registered is 
+///                                                 // handle<void (const char*)>
+/// ep.trigger("bad", std::string(""));             // this would raise a bad_cast
+/// \endcode
 template <typename Func, typename ...Args>
 inline void event_pool::register_event(const std::string &id_,
                                        Func function_,
@@ -215,9 +314,6 @@ inline void event_pool::trigger_event(const std::string &id_) {
     if (event != events.end()) {
         add_task(event->second);
 
-        // active_events.emplace(event->second);
-        // sem_post(&at_least_one_active);
-//        at_least_one_active.notify_all();
         return;
     }
     std::string err("fail to trigger: no registered events matched");
@@ -260,9 +356,6 @@ inline void event_pool::trigger_and_set(const std::string &id_, Args ...args) {
                                                 
         add_task(event->second);
 
-        // active_events.emplace(event->second);
-        // sem_post(&at_least_one_active);
-//        at_least_one_active.notify_all();
         return;
     }
     std::string err("fail to trigger: no registered events matched");
@@ -299,7 +392,7 @@ inline void event_pool::add_task(handle_ptr_t tmp_handle) {
 
 inline void event_pool::poll_events() {
     for (int i=0; i<THREAD_NUM; ++i) {
-        futures.emplace_back(std::async([i, this](){
+        threads.emplace_back(std::async([i, this](){
             while (!quit.load()) {
                 sem_wait(&thread_ok[i]);
                 while (active_event_queue[i].size()) {
