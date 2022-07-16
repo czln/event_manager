@@ -1,8 +1,6 @@
 ## event manager
 ### platform
 - OS: linux
-### TODO
-- support windows
 
 A simple event manager with a thread pool, register and trigger the events.
 

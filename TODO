@@ -1,1 +1,2 @@
-1. lock free queue
+1. windows semaphore
+2. lock free queue
