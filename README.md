@@ -1,4 +1,18 @@
 ## event manager
-a simple event manager, register and trigger the events.
+### platform
+- OS: linux
+### TODO
+- support windows
+
+A simple event manager with a thread pool, register and trigger the events.
+
 c++14 required.
-for exmples, see the test file
+
+
+``` c++
+event_pool ep;
+ep.register_callback("a", [](int a) {printf("%d\n");});
+ep.register_callback("a", 1);
+```
+
+ more exmples, see the test files
