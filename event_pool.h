@@ -24,55 +24,55 @@
 #include "threadpool.h"
 
 /// millisocond timer
-class timer {
-    enum type_t {
-        every,
-        once
-    };
-private:
-    sem_t &trigger;
-    std::chrono::milliseconds interv;
-    std::atomic_bool quit;
-    type_t type;
-    std::thread running;
-public:
-    timer(sem_t &trig, size_t time_ms, type_t t = every);
-    ~timer() { terminate(); }
-    void run();
-    void terminate() { quit = true; if (running.joinable()) running.join(); }
+// class timer {
+//     enum type_t {
+//         every,
+//         once
+//     };
+// private:
+//     sem_t &trigger;
+//     std::chrono::milliseconds interv;
+//     std::atomic_bool quit;
+//     type_t type;
+//     std::thread running;
+// public:
+//     timer(sem_t &trig, size_t time_ms, type_t t = every);
+//     ~timer() { terminate(); }
+//     void run();
+//     void terminate() { quit = true; if (running.joinable()) running.join(); }
 
-private:
-    void run_once();
-    void run_every();
-};
-timer::timer(sem_t &trig, size_t time_ms, type_t t) :
-    trigger(trig),
-    interv(time_ms),
-    quit(false),
-    type(t) {}
+// private:
+//     void run_once();
+//     void run_every();
+// };
+// timer::timer(sem_t &trig, size_t time_ms, type_t t) :
+//     trigger(trig),
+//     interv(time_ms),
+//     quit(false),
+//     type(t) {}
 
-void timer::run() {
-    if (type == once) {
-        run_once();
-    } else if (type == every) 
-        run_every();
-}
+// void timer::run() {
+//     if (type == once) {
+//         run_once();
+//     } else if (type == every) 
+//         run_every();
+// }
 
-/// \internal
-void timer::run_once() {
-    running = std::thread([this]() {
-        std::this_thread::sleep_for(interv);
-        sem_post(&trigger);
-    });
-}
-void timer::run_every() {
-    running = std::thread([this]() {
-        while (!quit.load()) {
-            std::this_thread::sleep_for(interv);
-            sem_post(&trigger);
-        }
-    });
-}
+// /// \internal
+// void timer::run_once() {
+//     running = std::thread([this]() {
+//         std::this_thread::sleep_for(interv);
+//         sem_post(&trigger);
+//     });
+// }
+// void timer::run_every() {
+//     running = std::thread([this]() {
+//         while (!quit.load()) {
+//             std::this_thread::sleep_for(interv);
+//             sem_post(&trigger);
+//         }
+//     });
+// }
 
 // template <typename ...Args>
 // class timer_handle : public handle_base {};
